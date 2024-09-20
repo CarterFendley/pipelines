@@ -1,3 +1,5 @@
 # install kfp sdk from local path
 -e ../../../../sdk/python
+# Install sample test requirements
+-r ../../../../test/sample-test/requirements.in
 fire

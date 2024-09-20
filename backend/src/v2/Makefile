@@ -55,11 +55,13 @@ test-watch: mlmd
 # make dev runs developing actions from end to end for KFP v2.
 # Build images, push them to dev image registry, build backend compiler, compile pipelines and run them.
 .PHONY: dev
-dev: pipeline/v2/hello_world \
-	pipeline/v2/producer_consumer_param \
-	pipeline/test/lightweight_python_functions_v2_pipeline \
-	pipeline/test/lightweight_python_functions_v2_with_outputs \
-	pipeline/core/exit_handler/exit_handler_v2 \
+dev:
+	$(MAKE) pipeline/v2/hello_world
+# && $(MAKE) pipeline/v2/subdag FUNCTION=outer_pipeline 
+# pipeline/v2/producer_consumer_param \
+# pipeline/test/lightweight_python_functions_v2_pipeline \
+# pipeline/test/lightweight_python_functions_v2_with_outputs \
+# pipeline/core/exit_handler/exit_handler_v2 \
 	
 # pipeline/core/condition/condition_v2:
 # pipeline/core/loop_output/loop_output_v2:
@@ -97,27 +99,47 @@ image-driver-dev:
 
 # tests pipelines
 pipeline/v2/hello_world:
-pipeline/v2/producer_consumer_param:
-pipeline/v2/pipeline_with_importer:
-pipeline/test/two_step:
-pipeline/test/lightweight_python_functions_v2_pipeline:
-pipeline/test/lightweight_python_functions_v2_with_outputs:
-pipeline/core/loop_output/loop_output_v2:
-pipeline/core/loop_static/loop_static_v2:
-pipeline/core/loop_parameter/loop_parameter_v2:
-pipeline/core/resource_spec/resource_spec_v2:
-pipeline/core/condition/condition_v2:
-pipeline/core/condition/condition_v2_simple:
+# pipeline/v2/subdag:
+# echo "$(FUNCTION)" && \
+# echo "$*"
+# pipeline/v2/producer_consumer_param:
+# pipeline/v2/pipeline_with_importer:
+# pipeline/test/two_step:
+# pipeline/test/lightweight_python_functions_v2_pipeline:
+# pipeline/test/lightweight_python_functions_v2_with_outputs:
+# pipeline/core/loop_output/loop_output_v2:
+# pipeline/core/loop_static/loop_static_v2:
+# pipeline/core/loop_parameter/loop_parameter_v2:
+# pipeline/core/resource_spec/resource_spec_v2:
+# pipeline/core/condition/condition_v2:
+# pipeline/core/condition/condition_v2_simple:
+
+SAMPLE_TEST_CMD = python $(REPO_ROOT)/test/sample-test/sample_test_launcher.py \
+	sample_test run_test \
+	--test-path $(REPO_ROOT)/samples/$*.py \
+	--host http://localhost:8080 \
+	--results-gcs-dir output
+ifdef FUNCTION
+	SAMPLE_TEST_CMD += --function $(FUNCTION)
+endif
+.PHONY: pipeline/%
+pipeline/%: # build/compiler image-dev
+	 @$(SAMPLE_TEST_CMD) && echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
 
 # Run a test pipeline using v2 CLI compiler (v2 engine mode).
-.PHONY: pipeline/%
-pipeline/%: build/compiler image-dev
-	tmp="$$(mktemp -d)" \
-	&& mkdir -p "$$(dirname $${tmp}/$*)" \
-	&& echo "SDK Compiling to $${tmp}/$*-spec.yaml" && kfp dsl compile --py $(REPO_ROOT)/samples/$*.py --output "$${tmp}/$*-spec.yaml" \
-	&& echo "Backend Compiler compiling to $${tmp}/$*.yaml" && build/compiler --spec "$${tmp}/$*-spec.yaml" --driver "$(DEV_IMAGE_PREFIX)driver:latest" --launcher "$(DEV_IMAGE_PREFIX)launcher-v2:latest" > "$${tmp}/$*.yaml" \
-	&& echo "Linting..." && if which argo >/dev/null; then argo lint "$${tmp}/$*.yaml"; else echo "argo CLI not found, skip linting"; fi \
-	&& echo "Running the pipeline..." && kfp run submit -f "$${tmp}/$*.yaml" -e default -r "$*_$${RANDOM}"
+# .PHONY: pipeline/%
+# pipeline/%: # build/compiler image-dev
+# 	@tmp="$$(mktemp -d)" \
+# 	&& mkdir -p "$$(dirname $${tmp}/$*)" \
+# 	&& echo "SDK Compiling to $${tmp}/$*-spec.yaml" \
+# 	&& kfp dsl compile --py $(REPO_ROOT)/samples/$*.py --output "$${tmp}/$*-spec.yaml" \
+# 	&& echo "Backend Compiler compiling to $${tmp}/$*.yaml" \
+# 	&& build/compiler --spec "$${tmp}/$*-spec.yaml" --driver "$(DEV_IMAGE_PREFIX)driver:latest" --launcher "$(DEV_IMAGE_PREFIX)launcher-v2:latest" > "$${tmp}/$*.yaml" \
+# 	&& echo "Linting..." \
+# 	&& if which argo >/dev/null; then argo lint "$${tmp}/$*.yaml"; else echo "argo CLI not found, skip linting"; fi \
+# 	&& echo "Running the pipeline..." \
+# 	&& echo "kfp run create -f \"$${tmp}/$*.yaml\" -e default -r \"$*_$${RANDOM}\"" \
+# 	&& kfp run create -f "$${tmp}/$*.yaml" -e default -r "$*_$${RANDOM}" || echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
 
 ###### Common target implementation details ######
 

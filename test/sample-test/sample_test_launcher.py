@@ -19,13 +19,13 @@ It decides which test to trigger based upon the arguments provided.
 import os
 import re
 import subprocess
+from tempfile import NamedTemporaryFile
 
 from check_notebook_results import NoteBookChecker
-from constants import BASE_DIR
 from constants import CONFIG_DIR
 from constants import DEFAULT_CONFIG
 from constants import SCHEMA_CONFIG
-from constants import TEST_DIR
+from constants import SAMPLE_TEST_DIR
 import fire
 import kubernetes
 import papermill as pm
@@ -38,21 +38,26 @@ import yaml
 class SampleTest(object):
 
     def __init__(self,
-                 test_name,
+                 test_path,
                  results_gcs_dir,
+                 function=None,
                  host='',
                  target_image_prefix='',
                  namespace='kubeflow'):
         """Launch a KFP sample_test provided its name.
 
-        :param test_name: name of the corresponding sample test.
+        :param test_path: path to the corresponding sample test.
         :param results_gcs_dir: gs dir to store test result.
+        :param function: the pipeline function to compile
         :param host: host of KFP API endpoint, default is auto-discovery from inverse-proxy-config.
         :param target_image_prefix: prefix of docker image, default is empty.
         :param namespace: namespace for kfp, default is kubeflow.
         """
-        self._test_name = test_name
+        self._test_name = None
+        self._test_path = test_path
+        self._compiled_path = None
         self._results_gcs_dir = results_gcs_dir
+        self._function = function
         # Capture the first segment after gs:// as the project name.
         self._target_image_prefix = target_image_prefix
         self._namespace = namespace
@@ -76,37 +81,24 @@ class SampleTest(object):
         print(f'KFP API healthz endpoint is: {self._host}/apis/v1beta1/healthz')
 
         self._is_notebook = None
-        self._work_dir = os.path.join(BASE_DIR, 'samples/core/',
-                                      self._test_name)
 
         self._sample_test_result = 'junit_Sample%sOutput.xml' % self._test_name
         self._sample_test_output = self._results_gcs_dir
 
     def _compile(self):
+        assert os.path.isfile(self._test_path), "Specified test path is not a valid file: %s" % self._test_path
 
-        os.chdir(self._work_dir)
-        print('Run the sample tests...')
+        # Grab the file name and extension type
+        self._test_name, ext_name = os.path.splitext(
+            os.path.split(self._test_path)[-1]
+        )
 
-        # Looking for the entry point of the test.
-        list_of_files = os.listdir('.')
-        for file in list_of_files:
-            # matching by .py or .ipynb, there will be yaml ( compiled ) files in the folder.
-            # if you rerun the test suite twice, the test suite will fail
-            m = re.match(self._test_name + '\.(py|ipynb)$', file)
-            if m:
-                file_name, ext_name = os.path.splitext(file)
-                if self._is_notebook is not None:
-                    raise (RuntimeError(
-                        'Multiple entry points found under sample: {}'.format(
-                            self._test_name)))
-                if ext_name == '.py':
-                    self._is_notebook = False
-                if ext_name == '.ipynb':
-                    self._is_notebook = True
-
-        if self._is_notebook is None:
-            raise (RuntimeError('No entry point found for sample: {}'.format(
-                self._test_name)))
+        if ext_name == '.py':
+            self._is_notebook = False
+        elif ext_name == '.ipynb':
+            self._is_notebook = True
+        else:
+            raise RuntimeError("Unrecognized test path file extension: '%s'" % ext_name)
 
         config_schema = yamale.make_schema(SCHEMA_CONFIG)
         # Retrieve default config
@@ -155,18 +147,31 @@ class SampleTest(object):
                     self._run_pipeline = raw_args['run_pipeline']
 
             pm.execute_notebook(
-                input_path='%s.ipynb' % self._test_name,
-                output_path='%s.ipynb' % self._test_name,
+                input_path=self._test_path,
+                output_path=self._test_path,
                 parameters=nb_params,
                 prepare_only=True)
             # Convert to python script.
             return_code = subprocess.call([
                 'jupyter', 'nbconvert', '--to', 'python',
-                '%s.ipynb' % self._test_name
+                self._test_path
             ])
 
-        else:
-            return_code = subprocess.call(['python3', '%s.py' % self._test_name])
+
+        # TODO: Does this work for notebooks?
+        f = NamedTemporaryFile(delete=False, suffix='.yaml')
+        f.close()
+        self._compiled_path = f.name
+        compile_args = [
+            'kfp', 'dsl', 'compile',
+            '--py', self._test_path,
+            '--output', self._compiled_path
+        ]
+
+        if self._function is not None:
+            compile_args.append('--function')
+            compile_args.append(self._function)
+        return_code = subprocess.call(compile_args)
 
         # Command executed successfully!
         assert return_code == 0
@@ -174,7 +179,7 @@ class SampleTest(object):
     def _injection(self):
         """Inject images for pipeline components.
 
-        This is only valid for coimponent test
+        This is only valid for component test
         """
         pass
 
@@ -195,16 +200,13 @@ class SampleTest(object):
                 host=self._host,
             )
             nbchecker.run()
-            os.chdir(TEST_DIR)
+            os.chdir(SAMPLE_TEST_DIR)
             nbchecker.check()
         else:
-            os.chdir(TEST_DIR)
-            input_file = os.path.join(self._work_dir,
-                                      '%s.py.yaml' % self._test_name)
-
+            os.chdir(SAMPLE_TEST_DIR)
             pysample_checker = PySampleChecker(
                 testname=self._test_name,
-                input=input_file,
+                input=self._compiled_path,
                 output=self._sample_test_output,
                 result=self._sample_test_result,
                 host=self._host,

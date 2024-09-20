@@ -73,9 +73,12 @@ class PySampleChecker(object):
         self._client = Client(host=self._host)
 
         ###### Check Input File ######
-        utils.add_junit_test(self._test_cases, 'input generated yaml file',
-                             os.path.exists(self._input),
-                             'yaml file is not generated')
+        utils.add_junit_test(
+            self._test_cases,
+            'input generated yaml file',
+            os.path.exists(self._input),
+            'yaml file is not generated'
+        )
         if not os.path.exists(self._input):
             utils.write_junit_xml(self._test_name, self._result,
                                   self._test_cases)
@@ -153,6 +156,7 @@ class PySampleChecker(object):
         if self._run_pipeline:
             ###### Monitor Job ######
             start_time = datetime.now()
+            print('Waiting for pipeline to execute...')
             response = self._client.wait_for_run_completion(self._run_id, self._test_timeout)
             succ = (response.state.lower() == 'succeeded')
             end_time = datetime.now()
