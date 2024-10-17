@@ -79,10 +79,18 @@ func Test_argo_compiler(t *testing.T) {
 			if tt.envVars != nil {
 				for _, envVar := range tt.envVars {
 					parts := strings.Split(strings.ReplaceAll(envVar, " ", ""), "=")
-					os.Setenv(parts[0], parts[1])
+					err := os.Setenv(parts[0], parts[1])
+					if err != nil {
+						t.Fatalf("Failed to set environment variable '%s' with error: %s", parts[0], err.Error())
+					}
 
 					// Unset after test cases has ended
-					defer os.Unsetenv(parts[0])
+					defer func() {
+						err := os.Unsetenv(parts[0])
+						if err != nil {
+							t.Fatalf("Failed to unset env variable '%s' with error: %s", parts[0], err.Error())
+						}
+					}()
 				}
 			}
 			if *update {
