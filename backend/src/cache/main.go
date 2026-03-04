@@ -89,6 +89,8 @@ func main() {
 	log.Println("Initing client manager....")
 	clientManager := NewClientManager(params, clientParams)
 	ctx := context.Background()
+
+	log.Println("Starting pod watcher....")
 	go server.WatchPods(ctx, params.namespaceToWatch, &clientManager)
 
 	certPath := filepath.Join(TLSDir, certFile)

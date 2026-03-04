@@ -29,11 +29,14 @@ import (
 	"github.com/kubeflow/pipelines/backend/src/cache/storage"
 	"github.com/kubeflow/pipelines/backend/src/common/util"
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 const (
-	DefaultConnectionTimeout = "6m"
+	DefaultConnectionTimeout = "5s"
 )
 
 type ClientManager struct {
@@ -62,28 +65,35 @@ func (c *ClientManager) Close() {
 
 func (c *ClientManager) init(params WhSvrDBParameters, clientParams util.ClientParameters) {
 	timeoutDuration, _ := time.ParseDuration(DefaultConnectionTimeout)
+	log.Println("Connecting to cache database....")
 	db := initDBClient(params, timeoutDuration)
 
 	c.time = util.NewRealTime()
 	c.db = db
+	log.Println("Connecting to cache store....")
 	c.cacheStore = storage.NewExecutionCacheStore(db, c.time)
+	log.Println("Connecting to k8")
 	c.k8sCoreClient = client.CreateKubernetesCoreOrFatal(timeoutDuration, clientParams)
 }
 
 func initDBClient(params WhSvrDBParameters, initConnectionTimeout time.Duration) *storage.DB {
 	driverName := params.dbDriver
-	var arg string
 
+	var dialector gorm.Dialector
 	switch driverName {
 	case mysqlDBDriverDefault:
-		arg = initMysql(params, initConnectionTimeout)
+		dialector = initRemoteMySQL(params, initConnectionTimeout)
+	case "local":
+		dialector = initLocalSQLite3(params, initConnectionTimeout)
 	default:
-		glog.Fatalf("Driver %v is not supported", driverName)
+		glog.Fatalf("Driver '%v' is not supported", driverName)
 	}
 
 	// db is safe for concurrent use by multiple goroutines
 	// and maintains its own pool of idle connections.
-	db, err := gorm.Open(mysql.Open(arg), &gorm.Config{})
+	log.Println("Opening gorm connection")
+	db, err := gorm.Open(dialector, &gorm.Config{})
+
 	util.TerminateIfError(err)
 
 	// Create table
@@ -110,8 +120,7 @@ func initDBClient(params WhSvrDBParameters, initConnectionTimeout time.Duration)
 	return storage.NewDB(db)
 }
 
-func initMysql(params WhSvrDBParameters, initConnectionTimeout time.Duration) string {
-
+func initRemoteMySQL(params WhSvrDBParameters, initConnectionTimeout time.Duration) gorm.Dialector {
 	var mysqlExtraParams = map[string]string{}
 	data := []byte(params.dbExtraParams)
 	json.Unmarshal(data, &mysqlExtraParams)
@@ -138,8 +147,8 @@ func initMysql(params WhSvrDBParameters, initConnectionTimeout time.Duration) st
 	b.MaxElapsedTime = initConnectionTimeout
 	err = backoff.Retry(operation, b)
 
-	defer db.Close()
 	util.TerminateIfError(err)
+	defer db.Close()
 
 	// Create database if not exist
 	dbName := params.dbName
@@ -154,6 +163,7 @@ func initMysql(params WhSvrDBParameters, initConnectionTimeout time.Duration) st
 	b = backoff.NewExponentialBackOff()
 	b.MaxElapsedTime = initConnectionTimeout
 	err = backoff.Retry(operation, b)
+	util.TerminateIfError(err)
 
 	operation = func() error {
 		_, err = db.Exec(fmt.Sprintf("USE %s", dbName))
@@ -165,15 +175,26 @@ func initMysql(params WhSvrDBParameters, initConnectionTimeout time.Duration) st
 	b = backoff.NewExponentialBackOff()
 	b.MaxElapsedTime = initConnectionTimeout
 	err = backoff.Retry(operation, b)
-
 	util.TerminateIfError(err)
-	mysqlConfig.DBName = dbName
+
+	mysqlConfig.DBName = params.dbName
 	// When updating, return rows matched instead of rows affected. This counts rows that are being
 	// set as the same values as before. If updating using a primary key and rows matched is 0, then
 	// it means this row is not found.
 	// Config reference: https://github.com/go-sql-driver/mysql#clientfoundrows
 	mysqlConfig.ClientFoundRows = true
-	return mysqlConfig.FormatDSN()
+	return mysql.Open(mysqlConfig.FormatDSN())
+}
+
+func initLocalSQLite3(params WhSvrDBParameters, initConnectionTimeout time.Duration) gorm.Dialector {
+	db, err := sql.Open("sqlite3", "./my_local_data.db")
+	if err != nil {
+		panic(err)
+	}
+
+	defer db.Close()
+
+	return sqlite.Open("./my_local_data.db")
 }
 
 func NewClientManager(params WhSvrDBParameters, clientParams util.ClientParameters) ClientManager {

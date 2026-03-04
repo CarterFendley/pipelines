@@ -21,3 +21,18 @@ export NAMESPACE=kubeflow
 kubectl apply -f cache-deployment.yaml --namespace $NAMESPACE
 kubectl apply -f cache-service.yaml --namespace $NAMESPACE
 ```
+
+TAKES way long the first time, add `build -x` to see commands
+
+```bash
+
+go build -x main.go
+# # command-line-arguments
+# ./main.go:90:19: undefined: NewClientManager
+
+
+go build -o kfp-cache .
+./kfp-cache
+
+go run .
+```
